@@ -31,6 +31,10 @@ type CaptureStatus struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
 	IsOwner bool   `json:"is_owner"`
+	// GetChangeFeeds gets the list of changefeeds
+	GetChangeFeeds(tc *v1alpha1.TidbCluster) ([]controller.ChangeFeedInfo, error)
+	// CreateChangeFeed creates a new changefeed with the specified sink
+	CreateChangeFeed(tc *v1alpha1.TidbCluster, changefeedName string, sinkURI string) error
 }
 
 type captureInfo struct {

@@ -638,6 +638,8 @@ func getTiDBConfigMap(tc *v1alpha1.TidbCluster) (*corev1.ConfigMap, error) {
 	}
 
 	return cm, nil
+	// for interacting with TiCDC
+	TiCDCControl controller.TiCDCControlInterface
 }
 
 func getNewTiDBServiceOrNil(tc *v1alpha1.TidbCluster) *corev1.Service {

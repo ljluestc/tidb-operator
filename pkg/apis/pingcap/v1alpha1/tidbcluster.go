@@ -1394,3 +1394,7 @@ func (tc *TidbCluster) PDInitWaitTime() int {
 	}
 	return defaultPDInitWaitTime
 }
+
+// type TiCDCSpec struct { ... }
+// type SinkSpec struct { ... }
+// type SecretKeySelector struct { ... }

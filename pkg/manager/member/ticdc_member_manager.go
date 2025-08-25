@@ -133,6 +133,13 @@ func (m *ticdcMemberManager) Sync(tc *v1alpha1.TidbCluster) error {
 		return nil
 	}
 
+	// Configure sink for remote storage if specified
+	if tc.Spec.TiCDC != nil && tc.Spec.TiCDC.Sink != nil && tc.Spec.TiCDC.Sink.Type != "" {
+		if err := m.syncTiCDCSinkForTidbCluster(tc); err != nil {
+			return err
+		}
+	}
+
 	ns := tc.GetNamespace()
 	tcName := tc.GetName()
 
@@ -505,6 +512,22 @@ func getNewTiCDCStatefulSet(tc *v1alpha1.TidbCluster, cm *corev1.ConfigMap) (*ap
 				},
 			},
 		})
+	}
+
+	// Configure sink for remote storage if specified
+	if tc.Spec.TiCDC != nil && tc.Spec.TiCDC.Sink != nil && tc.Spec.TiCDC.Sink.Type != "" {
+		if err := m.syncTiCDCSinkForTidbCluster(tc); err != nil {
+			klog.Errorf("Failed to sync TiCDC sink for cluster %s/%s: %v", ns, tcName, err)
+			return err
+		}
+	}
+
+	// Configure sink for remote storage if specified
+	if tc.Spec.TiCDC != nil && tc.Spec.TiCDC.Sink != nil && tc.Spec.TiCDC.Sink.Type != "" {
+		if err := m.syncTiCDCSinkForTidbCluster(tc); err != nil {
+			klog.Errorf("Failed to sync TiCDC sink for cluster %s/%s: %v", ns, tcName, err)
+			return err
+		}
 	}
 
 	if cm != nil {

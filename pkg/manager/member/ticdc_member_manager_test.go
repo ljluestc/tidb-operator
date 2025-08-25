@@ -592,6 +592,497 @@ func TestGetNewTiCDCStatefulSet(t *testing.T) {
 	}
 }
 
+func TestTiCDCGenerateSinkURI(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	// Create a fake client with test secrets
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-s3-credentials",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"access-key":        []byte("test-access-key"),
+			"secret-access-key": []byte("test-secret-key"),
+		},
+	}
+
+	fakeDeps := &controller.Dependencies{
+		KubeClientset: fake.NewSimpleClientset(secret),
+	}
+
+	manager := &ticdcMemberManager{
+		deps: fakeDeps,
+	}
+
+	testCases := []struct {
+		name      string
+		tc        *v1alpha1.TidbCluster
+		expectURI string
+		expectErr bool
+	}{
+		{
+			name: "s3 basic configuration",
+			tc: &v1alpha1.TidbCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.SinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-data",
+								AccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "access-key",
+								},
+								SecretAccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "secret-access-key",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-data?&access-key=test-access-key&secret-access-key=test-secret-key",
+			expectErr: false,
+		},
+		{
+			name: "s3 with region and endpoint",
+			tc: &v1alpha1.TidbCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.SinkConfig{
+								Bucket:   "test-bucket",
+								Path:     "cdc-data",
+								Endpoint: "s3.amazonaws.com",
+								Region:   "us-west-2",
+								AccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "access-key",
+								},
+								SecretAccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "secret-access-key",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-data?endpoint=s3.amazonaws.com&region=us-west-2&access-key=test-access-key&secret-access-key=test-secret-key",
+			expectErr: false,
+		},
+		{
+			name: "s3 with additional parameters",
+			tc: &v1alpha1.TidbCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.SinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-data",
+								AccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "access-key",
+								},
+								SecretAccessKeySecretRef: &v1alpha1.SecretKeySelector{
+									Name: "test-s3-credentials",
+									Key:  "secret-access-key",
+								},
+								Parameters: map[string]string{
+									"force-path-style": "true",
+									"acl":              "private",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-data?&access-key=test-access-key&secret-access-key=test-secret-key&force-path-style=true&acl=private",
+			expectErr: false,
+		},
+		{
+			name: "nfs configuration",
+			tc: &v1alpha1.TidbCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "nfs",
+							Config: &v1alpha1.SinkConfig{
+								Path: "/mnt/nfs/cdc-data",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "file:///mnt/nfs/cdc-data",
+			expectErr: false,
+		},
+		{
+			name: "missing secret reference",
+			tc: &v1alpha1.TidbCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.SinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-data",
+								// Missing secret references
+							},
+						},
+					},
+				},
+			},
+			expectURI: "",
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			uri, err := manager.generateSinkURI(tc.tc)
+
+			if tc.expectErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(uri).To(Equal(tc.expectURI))
+			}
+		})
+	}
+}
+
+func TestTiCDCGenerateSinkURI(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tests := []struct {
+		name      string
+		tc        *v1alpha1.TidbCluster
+		expectURI string
+		expectErr bool
+	}{
+		{
+			name: "s3 sink with basic config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "s3 sink with endpoint and region",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket:   "test-bucket",
+								Path:     "cdc-logs",
+								Endpoint: "s3.example.com",
+								Region:   "us-east-1",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs?endpoint=s3.example.com&region=us-east-1",
+			expectErr: false,
+		},
+		{
+			name: "s3 sink with additional parameters",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+								Parameters: map[string]string{
+									"acl":              "private",
+									"force-path-style": "true",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs?acl=private&force-path-style=true",
+			expectErr: false,
+		},
+		{
+			name: "gcs sink with basic config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "gcs",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "gcs://test-bucket/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "nfs sink",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "nfs",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Path: "/mnt/nfs/cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "file:///mnt/nfs/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "unsupported sink type",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "unsupported",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "",
+			expectErr: true,
+		},
+		{
+			name: "empty sink config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+						},
+					},
+				},
+			},
+			expectURI: "",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &ticdcMemberManager{}
+			uri, err := m.generateSinkURI(tt.tc)
+
+			if tt.expectErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(uri).To(Equal(tt.expectURI))
+			}
+		})
+	}
+}
+
+func TestGenerateSinkURI(t *testing.T) {
+	g := NewGomegaWithT(t)
+
+	tests := []struct {
+		name      string
+		tc        *v1alpha1.TidbCluster
+		expectURI string
+		expectErr bool
+	}{
+		{
+			name: "s3 sink with basic config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "s3 sink with endpoint and region",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket:   "test-bucket",
+								Path:     "cdc-logs",
+								Endpoint: "s3.example.com",
+								Region:   "us-east-1",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs?endpoint=s3.example.com&region=us-east-1",
+			expectErr: false,
+		},
+		{
+			name: "s3 sink with additional parameters",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+								Parameters: map[string]string{
+									"acl":              "private",
+									"force-path-style": "true",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectURI: "s3://test-bucket/cdc-logs?acl=private&force-path-style=true",
+			expectErr: false,
+		},
+		{
+			name: "gcs sink with basic config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "gcs",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "gcs://test-bucket/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "nfs sink",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "nfs",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Path: "/mnt/nfs/cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "file:///mnt/nfs/cdc-logs",
+			expectErr: false,
+		},
+		{
+			name: "unsupported sink type",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "unsupported",
+							Config: &v1alpha1.TiCDCSinkConfig{
+								Bucket: "test-bucket",
+								Path:   "cdc-logs",
+							},
+						},
+					},
+				},
+			},
+			expectURI: "",
+			expectErr: true,
+		},
+		{
+			name: "empty sink config",
+			tc: &v1alpha1.TidbCluster{
+				Spec: v1alpha1.TidbClusterSpec{
+					TiCDC: &v1alpha1.TiCDCSpec{
+						Sink: &v1alpha1.TiCDCSinkSpec{
+							Type: "s3",
+						},
+					},
+				},
+			},
+			expectURI: "",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &ticdcMemberManager{}
+			uri, err := m.generateSinkURI(tt.tc)
+
+			if tt.expectErr {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(uri).To(Equal(tt.expectURI))
+			}
+		})
+	}
+}
+
 func newFakeTiCDCMemberManager() (*ticdcMemberManager, *controller.FakeStatefulSetControl, *controller.FakeTiDBControl, *fakeIndexers) {
 	fakeDeps := controller.NewFakeDependencies()
 	tmm := &ticdcMemberManager{

@@ -176,7 +176,7 @@ type componentAccessorImpl struct {
 	statefulSetUpdateStrategy apps.StatefulSetUpdateStrategyType
 	podManagementPolicy       apps.PodManagementPolicyType
 	podSecurityContext        *corev1.PodSecurityContext
-	topologySpreadConstraints []TopologySpreadConstraint
+	topologySpreadConstraints []corev1.TopologySpreadConstraint
 	suspendAction             *SuspendAction
 
 	// ComponentSpec is the Component Spec
